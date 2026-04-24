@@ -1,0 +1,25 @@
+# PRClaw 运行配置（仅本仓库；Unified 系统使用内置实现，见 utils/unified_adapter.py）
+
+# UnifiedPRSystem 使用的配置文件（相对 prclaw 根目录）
+unified_config_path: "config/unified_config.yaml"
+
+# 默认输出模板类型（A-F）
+default_output_types:
+  - A
+  - B
+  - C
+
+# 默认是否启用内部知识图谱检索 / 外部检索
+default_use_graph_rag: true
+default_use_web_search: true
+
+web_search:
+  # auto: 优先 serper，失败后 fallback duckduckgo
+  # serper: 需要 SERPER_API_KEY
+  # duckduckgo: 无 key fallback
+  provider: auto
+  max_results: 5
+  timeout_seconds: 15
+
+export:
+  save_markdown: true
