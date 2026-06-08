@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -44,6 +45,14 @@ class QualityEvaluator:
     """质量评估器。"""
 
     def __init__(self) -> None:
+        self.failure_markers = [
+            "生成失败",
+            "connection error",
+            "apiconnectionerror",
+            "request error",
+            "timeout",
+            "rate limit",
+        ]
         self.metric_weights = {
             "relevance": 0.25,
             "innovation": 0.20,
@@ -60,6 +69,27 @@ class QualityEvaluator:
         context: Dict[str, Any],
         assessment_type: str = "automatic",
     ) -> QualityAssessment:
+        if self._is_generation_failure_content(plan_content):
+            metric_scores = [
+                QualityScore("relevance", 0.2, self.metric_weights["relevance"], "检测到生成失败文本，相关性无法有效评估"),
+                QualityScore("innovation", 0.1, self.metric_weights["innovation"], "检测到生成失败文本，创新性无法有效评估"),
+                QualityScore("feasibility", 0.1, self.metric_weights["feasibility"], "检测到生成失败文本，可执行性无法有效评估"),
+                QualityScore("completeness", 0.0, self.metric_weights["completeness"], "检测到生成失败文本，方案结构不完整"),
+                QualityScore("consistency", 0.3, self.metric_weights["consistency"], "检测到生成失败文本，一致性评估可信度受限"),
+                QualityScore("professionalism", 0.1, self.metric_weights["professionalism"], "检测到生成失败文本，专业内容不足"),
+            ]
+            overall_score = sum(score.score * score.weight for score in metric_scores)
+            return QualityAssessment(
+                plan_id=plan_id,
+                overall_score=overall_score,
+                metric_scores=metric_scores,
+                assessment_type=assessment_type,
+                assessor_id=None,
+                timestamp=datetime.now().isoformat(),
+                comments="检测到生成失败文本，建议先修复生成链路或使用兜底方案。",
+                improvements=["优先修复 LLM 连接或启用兜底模板后再评估质量"],
+            )
+
         metric_scores = [
             self._evaluate_metric(metric.value, plan_content, context) for metric in QualityMetric
         ]
@@ -99,6 +129,12 @@ class QualityEvaluator:
             comments=comments,
             improvements=improvements or [],
         )
+
+    def _is_generation_failure_content(self, plan_content: str) -> bool:
+        text = (plan_content or "").lower()
+        if not text.strip():
+            return True
+        return any(marker in text for marker in self.failure_markers)
 
     def _evaluate_metric(self, metric: str, plan_content: str, context: Dict[str, Any]) -> QualityScore:
         weight = self.metric_weights.get(metric, 0.1)
@@ -167,9 +203,19 @@ class QualityEvaluator:
 
     def _evaluate_completeness(self, plan_content: str, _: Dict[str, Any]) -> Tuple[float, str]:
         required_sections = ["目标", "策略", "渠道", "内容", "时间", "预算"]
-        section_count = sum(1 for section in required_sections if section in plan_content)
-        score = min(section_count / len(required_sections), 1.0)
-        return score, f"方案包含 {section_count}/{len(required_sections)} 个必要部分"
+        heading_hits = 0
+        keyword_hits = 0
+        for section in required_sections:
+            heading_pattern = rf"(?:^|\n)\s*(?:#+\s*)?(?:[一二三四五六七八九十\d]+[、.])?\s*.*{section}"
+            if re.search(heading_pattern, plan_content):
+                heading_hits += 1
+            elif section in plan_content:
+                keyword_hits += 1
+
+        # 标题命中权重更高，避免纯关键词堆叠导致高分误判。
+        weighted_hits = heading_hits + keyword_hits * 0.4
+        score = min(weighted_hits / len(required_sections), 1.0)
+        return score, f"结构命中 {heading_hits} 项，关键词命中 {keyword_hits} 项（共 {len(required_sections)} 项）"
 
     def _evaluate_consistency(self, plan_content: str, _: Dict[str, Any]) -> Tuple[float, str]:
         contradictions = [("保守", "激进"), ("低成本", "高预算"), ("短期", "长期")]
@@ -214,4 +260,3 @@ class QualityEvaluator:
             }
             improvements.append(suggestions.get(score.metric, "加强该指标表现"))
         return improvements
-

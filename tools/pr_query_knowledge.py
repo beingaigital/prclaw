@@ -7,6 +7,7 @@ from datetime import datetime
 
 from langchain_core.tools import tool
 
+from core.querying.local_knowledge import has_meaningful_answer, search_local_knowledge
 from utils.unified_adapter import get_unified_adapter
 from utils.prclaw_config import get_prclaw_config
 from utils.web_search import format_web_context, search_web
@@ -39,6 +40,17 @@ def pr_query_knowledge(
             rag_answer = adapter.query_knowledge(query, use_graph=True)
         except Exception as exc:
             rag_error = str(exc)
+    rag_hit = has_meaningful_answer(rag_answer)
+
+    local_payload = {
+        "enabled": True,
+        "hit": False,
+        "terms": [],
+        "answer": "",
+        "results": [],
+    }
+    if not rag_hit:
+        local_payload = search_local_knowledge(query=query, max_results=3)
 
     web_payload = {
         "provider": "disabled",
@@ -51,27 +63,44 @@ def pr_query_knowledge(
         except Exception:
             max_results = cfg.web_search.max_results
         web_payload = search_web(query=query, max_results=max_results)
+    web_results = web_payload.get("results", []) or []
+    web_hit = bool(web_results)
 
     merged_parts = []
-    if rag_answer:
+    if rag_hit:
         merged_parts.append("内部知识库检索结果:\n" + rag_answer)
+    if local_payload.get("hit") and local_payload.get("answer"):
+        merged_parts.append("内部本地知识库检索结果:\n" + str(local_payload["answer"]))
     web_context = format_web_context(web_payload)
     if web_context:
         merged_parts.append(web_context)
 
+    has_internal_context = bool(rag_hit or local_payload.get("hit"))
+    has_any_context = bool(has_internal_context or web_hit)
     payload = {
         "query": query,
         "timestamp": datetime.now().isoformat(),
         "rag": {
             "enabled": bool(use_graph_rag),
+            "hit": rag_hit,
             "answer": rag_answer,
             "error": rag_error,
         },
+        "local_knowledge": local_payload,
         "web": {
             "enabled": bool(use_web_search),
+            "hit": web_hit,
             "provider": web_payload.get("provider", ""),
             "error": web_payload.get("error", ""),
-            "results": web_payload.get("results", []),
+            "results": web_results,
+        },
+        "retrieval": {
+            "has_internal_context": has_internal_context,
+            "has_any_context": has_any_context,
+            "answer_policy": (
+                "优先基于 merged_context 回答；若 has_any_context=false，必须明确说明内部知识库和外部检索均未命中，"
+                "不得把通用模型知识伪装成知识库结果。如仍需补充，只能标注为通用经验。"
+            ),
         },
         "merged_context": "\n\n".join(merged_parts).strip(),
     }

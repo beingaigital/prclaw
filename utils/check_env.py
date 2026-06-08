@@ -46,6 +46,18 @@ def _main_model_api_key_env() -> str:
     return "APIKEY"
 
 
+def _load_dotenv_if_present(env_path: Path) -> None:
+    """自检阶段也加载 .env，避免出现“已配置但误告警”的情况。"""
+    if not env_path.exists():
+        return
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(env_path, override=False)
+    except Exception:
+        return
+
+
 def run_environment_check() -> int:
     """
     执行环境检查，返回进程退出码：0 表示可继续运行，1 表示存在阻塞性错误。
@@ -73,6 +85,7 @@ def run_environment_check() -> int:
     # .env（可选但推荐）
     env_path = root / ".env"
     if env_path.exists():
+        _load_dotenv_if_present(env_path)
         _ok(".env 已存在（将按 python-dotenv 规则在运行时加载）")
     else:
         warnings.append("未找到 .env，请复制 .env.example 为 .env 并填写密钥与数据库信息")

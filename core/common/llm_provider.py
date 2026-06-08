@@ -5,7 +5,7 @@ LLM provider with safe fallback to avoid dependency/runtime crashes.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Dict
 
 
@@ -23,6 +23,24 @@ class EchoLLM:
     def invoke(self, prompt: Any) -> _EchoResponse:
         text = prompt if isinstance(prompt, str) else getattr(prompt, "to_string", lambda: str(prompt))()
         return _EchoResponse(content=f"[offline echo]\n{text}")
+
+
+@dataclass
+class LLMRuntimeSettings:
+    provider: str
+    model: str
+    tier: str
+    base_url: str
+    api_key_env: str
+    api_key_present: bool
+
+
+@dataclass
+class LLMProbeResult:
+    ok: bool
+    error_code: str
+    message: str
+    settings: Dict[str, Any]
 
 
 _PROVIDER_CONFIG: Dict[str, Dict[str, Any]] = {
@@ -70,6 +88,28 @@ _PROVIDER_ALIASES: Dict[str, str] = {
     "openai-compatible": "openai_compatible",
     "compatible": "openai_compatible",
 }
+
+
+def classify_llm_error(error: Any) -> Dict[str, str]:
+    """将模型调用异常标准化为错误码，供上层流程统一处理。"""
+    msg = str(error or "").strip()
+    low = msg.lower()
+
+    if not msg:
+        return {"code": "E_LLM_UNKNOWN", "message": "未知模型错误"}
+    if "api_key" in low or "api key" in low or "unauthorized" in low or "401" in low:
+        return {"code": "E_LLM_AUTH", "message": msg}
+    if "timeout" in low or "timed out" in low:
+        return {"code": "E_LLM_TIMEOUT", "message": msg}
+    if "rate limit" in low or "429" in low or "quota" in low:
+        return {"code": "E_LLM_RATE_LIMIT", "message": msg}
+    if "connection error" in low or "failed to resolve" in low or "name resolution" in low:
+        return {"code": "E_LLM_CONNECTION", "message": msg}
+    if "invalid_request_error" in low or "bad request" in low or "400" in low:
+        return {"code": "E_LLM_BAD_REQUEST", "message": msg}
+    if "not found" in low or "model" in low and "exist" in low:
+        return {"code": "E_LLM_MODEL_NOT_FOUND", "message": msg}
+    return {"code": "E_LLM_UNKNOWN", "message": msg}
 
 
 def _resolve_provider(provider: str | None) -> str:
@@ -124,35 +164,108 @@ def _resolve_api_key(provider: str, default_env: str) -> str:
     )
 
 
+def resolve_llm_runtime(
+    model: str | None = None,
+    provider: str | None = None,
+    tier: str = "flash",
+) -> LLMRuntimeSettings:
+    provider_resolved = _resolve_provider(provider)
+    conf = _PROVIDER_CONFIG.get(provider_resolved, _PROVIDER_CONFIG["openai"])
+    chosen_model = _resolve_model(provider_resolved, tier, model)
+    base_url = _resolve_base_url(provider_resolved, conf["base_url"])
+    api_key_env = str(conf.get("api_key_env", "") or "APIKEY")
+    api_key = _resolve_api_key(provider_resolved, api_key_env)
+    return LLMRuntimeSettings(
+        provider=provider_resolved,
+        model=chosen_model,
+        tier=tier,
+        base_url=base_url,
+        api_key_env=api_key_env,
+        api_key_present=bool(api_key),
+    )
+
+
 def get_chat_llm(
     model: str | None = None,
     temperature: float = 0.1,
     max_tokens: int = 2000,
     provider: str | None = None,
     tier: str = "flash",
+    allow_init_fallback: bool = True,
 ):
     """
     获取统一的 Chat LLM，支持 openai/kimi/deepseek/qwen/google，并按 tier（flash/thinking）选择模型。
     """
-    provider_resolved = _resolve_provider(provider)
-    conf = _PROVIDER_CONFIG.get(provider_resolved, _PROVIDER_CONFIG["openai"])
-    chosen_model = _resolve_model(provider_resolved, tier, model)
-    base_url = _resolve_base_url(provider_resolved, conf["base_url"])
-    api_key = _resolve_api_key(provider_resolved, conf["api_key_env"])
+    runtime = resolve_llm_runtime(model=model, provider=provider, tier=tier)
+    api_key = _resolve_api_key(runtime.provider, runtime.api_key_env)
 
     try:
         from langchain_openai import ChatOpenAI
 
         return ChatOpenAI(
-            model=chosen_model,
+            model=runtime.model,
             temperature=temperature,
             max_tokens=max_tokens,
             api_key=api_key or None,
-            base_url=base_url,
+            base_url=runtime.base_url,
         )
     except Exception as exc:  # pragma: no cover - fallback path
+        if not allow_init_fallback:
+            raise
         print(f"⚠️ ChatOpenAI 初始化失败，使用离线回显模型: {exc}")
         return EchoLLM()
 
 
-__all__ = ["get_chat_llm", "EchoLLM"]
+def probe_chat_llm(
+    model: str | None = None,
+    provider: str | None = None,
+    tier: str = "flash",
+) -> Dict[str, Any]:
+    """执行轻量连通性探针，返回标准化探测结果。"""
+    runtime = resolve_llm_runtime(model=model, provider=provider, tier=tier)
+    settings = asdict(runtime)
+
+    if not runtime.api_key_present:
+        result = LLMProbeResult(
+            ok=False,
+            error_code="E_LLM_MISSING_KEY",
+            message=f"未检测到 {runtime.api_key_env}，无法进行 LLM 连通性探针",
+            settings=settings,
+        )
+        return asdict(result)
+
+    try:
+        llm = get_chat_llm(
+            model=model,
+            provider=provider,
+            tier=tier,
+            temperature=0.0,
+            max_tokens=16,
+            allow_init_fallback=False,
+        )
+        _ = llm.invoke("Return exactly `OK`.")
+        result = LLMProbeResult(
+            ok=True,
+            error_code="",
+            message="LLM 连通性探针通过",
+            settings=settings,
+        )
+        return asdict(result)
+    except Exception as exc:
+        normalized = classify_llm_error(exc)
+        result = LLMProbeResult(
+            ok=False,
+            error_code=normalized["code"],
+            message=normalized["message"],
+            settings=settings,
+        )
+        return asdict(result)
+
+
+__all__ = [
+    "get_chat_llm",
+    "resolve_llm_runtime",
+    "probe_chat_llm",
+    "classify_llm_error",
+    "EchoLLM",
+]

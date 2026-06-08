@@ -415,6 +415,16 @@ CATEGORY_SCHEMA = {
                 "keywords": ["展望", "未来", "下一步", "规划", "Outlook", "Future", "建议", "方向"]
             }
         }
+    },
+
+    "other": {
+        "label": "其他",
+        "sub_categories": {
+            "general": {
+                "label": "其他",
+                "keywords": []
+            }
+        }
     }
 }
 
@@ -501,5 +511,4 @@ def get_category_by_code(l2_code: str):
             }
 
     return None
-
 

@@ -33,6 +33,12 @@ skills:
     priority: 88
     keywords: ["创意", "内容", "话题", "脚本", "短视频", "小红书", "活动"]
 
+  copy_news_release:
+    file: skills/copy-news-release.md
+    enabled: true
+    priority: 92
+    keywords: ["声明", "道歉", "回应", "新闻稿", "新闻发布", "发言人", "口径", "通稿", "公关文案"]
+
   measurement:
     file: skills/data-analysis.md
     enabled: true

@@ -26,6 +26,15 @@ PLAN_TYPE_LABELS: Dict[str, str] = {
 }
 
 _ALLOWED_PLAN_TYPES = set(PLAN_TYPE_LABELS.keys())
+_GENERATION_ERROR_HINTS = (
+    "生成失败",
+    "connection error",
+    "apiconnectionerror",
+    "timeout",
+    "rate limit",
+    "network",
+    "invalid api key",
+)
 
 
 def _parse_output_types(raw: str, defaults: List[str]) -> List[str]:
@@ -55,6 +64,96 @@ def _merge_enterprise_info(base: Dict[str, str], patch: Dict[str, Any]) -> Dict[
         if not merged.get(key, "").strip():
             merged[key] = str(patch.get(key, "") or "").strip()
     return merged
+
+
+def _looks_like_generation_error(content: Any) -> bool:
+    text = str(content or "").strip().lower()
+    if not text:
+        return True
+    return any(hint in text for hint in _GENERATION_ERROR_HINTS)
+
+
+def _build_fallback_plan(output_type: str, enterprise_info: Dict[str, str], error_hint: str = "") -> str:
+    enterprise = enterprise_info.get("enterprise_name") or "品牌方"
+    industry = enterprise_info.get("industry") or "消费行业"
+    goal = enterprise_info.get("pr_goal") or "提升品牌认知与参与度"
+    cycle = enterprise_info.get("pr_cycle") or "8周"
+    budget = enterprise_info.get("pr_budget") or "待确认"
+    audience = enterprise_info.get("target_audience") or "18-24岁青年群体"
+    messages = enterprise_info.get("key_messages") or "向美而声，青年共创"
+    extra = enterprise_info.get("extra_requirements") or "线上线下联动"
+
+    prefix = "说明：检测到模型连接异常，以下为系统自动生成的结构化兜底稿，可直接二次编辑。\n"
+    if error_hint:
+        prefix += f"异常摘要：{error_hint}\n\n"
+    else:
+        prefix += "\n"
+
+    if output_type == "A":
+        return (
+            prefix
+            + f"【图文创意简报｜{enterprise}】\n"
+            + f"- 创意主题：向美而声，青年万有引力\n"
+            + f"- 核心主张：围绕“{goal}”建立青年与品牌的双向吸引。\n"
+            + "- 视觉调性：高对比青春色块 + 科技感网格 + 真人纪实特写。\n"
+            + f"- 关键元素：青年人像、任务徽章、共创轨道、品牌资产（{messages}）。\n"
+            + "- 适配场景：校园海报、地铁灯箱、社媒封面、活动签到背景板。\n"
+            + f"- 执行提醒：人群聚焦“{audience}”，并确保素材可复用于短视频切片。\n"
+        )
+
+    if output_type == "B":
+        return (
+            prefix
+            + f"【视频脚本｜{enterprise}】\n"
+            + "时长：60秒\n"
+            + "1. 0-5秒（Hook）：快节奏切镜呈现青年多元身份，字幕“年轻，不止一种定义”。\n"
+            + f"2. 6-20秒（问题）：抛出青年成长焦虑与行业机会，点题“{industry}的新赛点”。\n"
+            + "3. 21-40秒（解决）：展示项目机制（校园Fun卖会/黑客松/实习机会）与真实收益。\n"
+            + f"4. 41-55秒（价值）：强化“{messages}”，呈现参与者成果与社会影响。\n"
+            + "5. 56-60秒（CTA）：字幕“立即加入万有引力计划”，引导预约/报名。\n"
+            + f"配音建议：年轻、坚定、真实；结尾落到“{goal}”。\n"
+        )
+
+    if output_type == "C":
+        return (
+            prefix
+            + f"【整合活动方案｜{enterprise}】\n"
+            + "一、目标与KPI\n"
+            + f"- 传播目标：{goal}\n"
+            + "- KPI建议：总曝光3000万+、互动率8%+、有效报名3000+、人才库沉淀1000+。\n"
+            + "二、受众洞察\n"
+            + f"- 核心人群：{audience}\n"
+            + "- 关键洞察：青年希望“被看见、被赋能、可成长”，不只接受单向宣传。\n"
+            + "三、核心叙事\n"
+            + "- 战役口号：向美而声\n"
+            + f"- 内容主轴：用“一人千面”的成长路径，承接“{messages}”。\n"
+            + "四、传播节奏\n"
+            + f"- 周期：{cycle}\n"
+            + "- 阶段1 预热（25%）：校园话题测试 + 招募挑战赛\n"
+            + "- 阶段2 引爆（45%）：主活动日 + KOL/KOC联动 + 直播共创\n"
+            + "- 阶段3 沉淀（30%）：案例短片、成果展、雇主品牌内容回流\n"
+            + "五、渠道策略\n"
+            + "- 抖音/B站：挑战赛与纪录式内容\n"
+            + "- 小红书/微博：参与心得与口碑扩散\n"
+            + "- 微信私域：报名转化、社群运营与长期跟进\n"
+            + f"- 创新玩法：{extra}\n"
+            + "六、预算拆分\n"
+            + f"- 总预算：{budget}\n"
+            + "- 内容与创意 30% | 媒介投放 35% | 校园执行 20% | 数据与应急 15%\n"
+            + "七、风险预案\n"
+            + "- 负面舆情：24小时响应口径 + 双审批机制\n"
+            + "- 进度偏差：按周复盘，保留10%机动预算用于加投或补救\n"
+        )
+
+    return (
+        prefix
+        + f"【{PLAN_TYPE_LABELS.get(output_type, output_type)}】\n"
+        + f"- 品牌：{enterprise}\n"
+        + f"- 行业：{industry}\n"
+        + f"- 目标：{goal}\n"
+        + f"- 周期：{cycle}\n"
+        + f"- 预算：{budget}\n"
+    )
 
 
 def _render_markdown(
@@ -141,6 +240,7 @@ def pr_generate_plan(
     use_graph_rag: bool = True,
     use_web_search: bool = True,
     requirements_confirmed: bool = False,
+    allow_fallback_template: bool = True,
 ) -> str:
     """
     描述：生成公关传播方案。输入企业信息后，自动融合内部 GraphRAG 知识与外部信息，输出多类型方案。
@@ -235,6 +335,45 @@ def pr_generate_plan(
         context=final_context,
     )
 
+    raw_generation_status = "success"
+    failed_output_types: List[str] = []
+    generation_errors: Dict[str, str] = {}
+    fallback_used = False
+
+    if not isinstance(result, dict):
+        raw_generation_status = "failed"
+        failed_output_types = list(selected_output_types)
+        err_text = str(result).strip() or "未知生成错误"
+        generation_errors = {k: err_text for k in selected_output_types}
+        result = {}
+    elif "error" in result:
+        raw_generation_status = "failed"
+        err_text = str(result.get("error", "")).strip() or "未知生成错误"
+        failed_output_types = list(selected_output_types)
+        generation_errors = {k: err_text for k in selected_output_types}
+        result = {}
+    else:
+        for output_type in selected_output_types:
+            content = result.get(output_type, "")
+            if _looks_like_generation_error(content):
+                failed_output_types.append(output_type)
+                generation_errors[output_type] = str(content).strip()[:260] or "空内容"
+        if failed_output_types:
+            raw_generation_status = "failed" if len(failed_output_types) == len(selected_output_types) else "partial"
+
+    if allow_fallback_template and failed_output_types:
+        for output_type in failed_output_types:
+            result[output_type] = _build_fallback_plan(
+                output_type=output_type,
+                enterprise_info=enterprise_info,
+                error_hint=generation_errors.get(output_type, ""),
+            )
+        fallback_used = True
+
+    final_status = raw_generation_status
+    if fallback_used and raw_generation_status in {"failed", "partial"}:
+        final_status = "success_with_fallback"
+
     plan_id = datetime.now().strftime("%Y%m%d%H%M%S")
     markdown_path = ""
     markdown_error = ""
@@ -255,6 +394,11 @@ def pr_generate_plan(
 
     payload = {
         "plan_id": plan_id,
+        "status": final_status,
+        "raw_generation_status": raw_generation_status,
+        "fallback_used": fallback_used,
+        "failed_output_types": failed_output_types,
+        "generation_errors": generation_errors,
         "enterprise_info": enterprise_info,
         "output_types": selected_output_types,
         "result": result,

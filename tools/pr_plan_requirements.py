@@ -91,6 +91,39 @@ def _trim_by_markers(text: str, markers: List[str]) -> str:
     return out
 
 
+def _normalize_short_field(raw: str, field: str = "") -> str:
+    text = _clean_text(raw)
+    if not text:
+        return ""
+
+    text = _trim_by_markers(
+        text,
+        [
+            "；",
+            ";",
+            "，",
+            ",",
+            "。",
+            "\n",
+            "请做",
+            "请给",
+            "预算",
+            "周期",
+            "目标",
+            "方向",
+            "要求",
+        ],
+    )
+    text = re.sub(r"^(?:是|为|属于|定位为)\s*", "", text, flags=re.IGNORECASE)
+    text = text.strip(" ：:，,。；;")
+
+    # 企业名里常出现“欧莱雅青年xx计划”这样的短语，兜底去掉明显后缀。
+    if field == "enterprise_name":
+        text = re.sub(r"(青年|项目|计划|活动)$", "", text).strip()
+
+    return text
+
+
 def _extract_output_types(text: str) -> str:
     if not text:
         return ""
@@ -138,12 +171,15 @@ def _extract_cycle(text: str) -> str:
 def _extract_enterprise_name(text: str) -> str:
     patterns = [
         r"(?:给|为|帮|替)\s*([^，。,\s]{2,30}?)(?:的|做|制定|策划)",
-        r"(?:品牌|企业|公司)\s*[:：]?\s*([^，。,\n]{2,30})",
+        r"(?:品牌|企业|公司)\s*(?:全称)?\s*(?:是|为|:|：)\s*([^，。；;\n]{2,30})",
+        r"命题\s*[:：]?[^\n]{0,40}[—\-]{1,2}\s*([A-Za-z0-9\u4e00-\u9fa5]{2,20})",
     ]
     for p in patterns:
         hit = _extract_first(p, text)
         if hit:
-            return hit
+            cleaned = _normalize_short_field(hit, field="enterprise_name")
+            if cleaned:
+                return cleaned
     return ""
 
 
@@ -166,8 +202,10 @@ def _extract_ip_name(text: str) -> str:
 def _extract_industry(text: str) -> str:
     if "潮玩" in text:
         return "潮玩/文创"
-    hit = _extract_first(r"(?:行业|赛道|领域|品类)\s*[:：]?\s*([^，。,\n]{2,30})", text)
-    return hit
+    if "美妆" in text:
+        return "美妆/个护"
+    hit = _extract_first(r"(?:行业|赛道|领域|品类)\s*(?:是|为|:|：)?\s*([^，。；;\n]{2,30})", text)
+    return _normalize_short_field(hit, field="industry")
 
 
 def _extract_goal(text: str) -> str:

@@ -26,13 +26,81 @@ class PRPlanGenerator:
                      or "gpt-4o-mini",
             "max_tokens": base_config.get("max_tokens", 2048),
             "temperature": base_config.get("temperature", 0.6),
+            "fallback_providers": base_config.get("fallback_providers") or [],
+            "max_retries": base_config.get("max_retries", 2),
+            "retry_backoff_seconds": base_config.get("retry_backoff_seconds", 0.7),
         }
         self._executor = LLMExecutor(
             provider=self.llm_config["provider"],
             model=self.llm_config["model"],
             max_tokens=self.llm_config["max_tokens"],
             temperature=self.llm_config["temperature"],
+            fallback_providers=self.llm_config["fallback_providers"],
+            max_retries=self.llm_config["max_retries"],
+            retry_backoff_seconds=self.llm_config["retry_backoff_seconds"],
         )
+
+    @staticmethod
+    def _is_failure_text(text: str) -> bool:
+        low = (text or "").strip().lower()
+        return low.startswith("生成失败[") or low.startswith("生成失败:")
+
+    @staticmethod
+    def _ensure_structure(plan_type: str, content: str, enterprise_info: Dict[str, Any]) -> str:
+        """对 A/B/C 做最小结构保底，降低模型输出过散导致的交付风险。"""
+        text = str(content or "").strip()
+        if not text or PRPlanGenerator._is_failure_text(text):
+            return text
+
+        if plan_type == "C":
+            required = ["目标与KPI", "受众洞察", "传播节奏", "渠道策略", "预算", "风险"]
+            hit = sum(1 for x in required if x in text)
+            if hit >= 4:
+                return text
+            enterprise = str(enterprise_info.get("enterprise_name", "品牌方")).strip() or "品牌方"
+            goal = str(enterprise_info.get("pr_goal", "提升品牌影响力")).strip() or "提升品牌影响力"
+            return (
+                text
+                + "\n\n---\n"
+                + "以下为结构补全（自动追加）：\n"
+                + f"一、目标与KPI\n- 品牌：{enterprise}\n- 目标：{goal}\n- KPI：曝光、互动、留资、转化。\n"
+                + "二、受众洞察\n- 核心人群、场景与触发点。\n"
+                + "三、传播节奏\n- 预热、引爆、沉淀三阶段与里程碑。\n"
+                + "四、渠道策略\n- 公域平台矩阵 + 私域承接路径。\n"
+                + "五、预算分配\n- 按内容、媒介、执行、应急拆分。\n"
+                + "六、风险预案\n- 舆情、执行、转化风险与应对机制。\n"
+            )
+
+        if plan_type == "B":
+            required = ["分镜", "旁白", "时长", "CTA"]
+            hit = sum(1 for x in required if x in text)
+            if hit >= 3:
+                return text
+            return (
+                text
+                + "\n\n---\n"
+                + "以下为脚本结构补全（自动追加）：\n"
+                + "- 时长：建议 45-60 秒\n"
+                + "- 分镜：开场 Hook / 冲突 / 解决 / 价值升华 / CTA\n"
+                + "- 旁白：每段一句核心信息，避免口号堆叠\n"
+                + "- CTA：明确报名路径与截止时间\n"
+            )
+
+        if plan_type == "A":
+            required = ["创意主题", "视觉", "应用场景"]
+            hit = sum(1 for x in required if x in text)
+            if hit >= 2:
+                return text
+            return (
+                text
+                + "\n\n---\n"
+                + "以下为简报结构补全（自动追加）：\n"
+                + "- 创意主题：一句话主张 + 传播口号\n"
+                + "- 视觉规范：主色/辅助色/字体/版式比例\n"
+                + "- 应用场景：KV海报、社媒封面、活动主视觉、校园物料\n"
+            )
+
+        return text
 
     def generate_plan(
         self,
@@ -55,7 +123,8 @@ class PRPlanGenerator:
             if not template:
                 continue
             prompt = template.format(context=enriched_context, vars=vars_text)
-            results[plan_type] = self._executor.complete(prompt)
+            raw = self._executor.complete(prompt)
+            results[plan_type] = self._ensure_structure(plan_type, raw, enterprise_info)
 
         return format_plan_results(results)
 

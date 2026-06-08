@@ -11,6 +11,10 @@
 - 只有在用户明确确认（如“确认生成”）后，才调用 `pr_generate_plan`。
 - 若需要事实依据或方案生成，优先调用 PR 工具。
 - 工具返回内容是 JSON 字符串，必须先解析字段再给结论。
+- 使用 `pr_query_knowledge` 后必须检查 `retrieval.has_internal_context`、`rag.hit`、`local_knowledge.hit`、`web.hit`：
+  - 若有命中的 `merged_context`，回答必须以命中内容为依据，并说明依据来自内部知识库/本地规则库/外部检索。
+  - 若 `retrieval.has_any_context=false`，必须明确告知“内部知识库未召回相关资料”，不要把通用大模型知识包装成知识库答案。
+  - 若仍然提供通用框架，只能单独标注为“通用经验补充”，并提醒需要补充知识库资料或开启可用外部检索。
 - 若工具调用失败，明确报错原因并提供下一步补救动作。
 
 输出要求：
